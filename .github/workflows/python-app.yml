@@ -79,7 +79,7 @@ jobs:
       - name: Build Docker image and push to ECR
         run: |
           docker tag ghcr.io/${{ github.repository }}/your-app-name:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/your-app-name:latest
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/your-app-name:latest
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/cicd-program:latest
 
       - name: Update ECS Task Definition and Deploy
         run: |
