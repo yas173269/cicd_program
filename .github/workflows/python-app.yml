@@ -11,10 +11,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v2
-    
+
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
@@ -27,4 +28,4 @@ jobs:
 
     - name: Run tests
       run: |
-        test --maxfail=1 --disable-warnings -q
+        pytest test.py --maxfail=1 --disable-warnings -q
