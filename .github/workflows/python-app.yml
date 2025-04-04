@@ -86,6 +86,10 @@ jobs:
       - name: Pull image from GHCR
         run: |
           docker pull ghcr.io/${{ github.repository }}/cicd-program:latest
+      - name: Ensure ECR Repository Exists
+        run: |
+          aws ecr describe-repositories --repository-names ***-program || \
+          aws ecr create-repository --repository-name ***-program
 
       - name: Tag and Push to ECR
         run: |
