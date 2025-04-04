@@ -88,8 +88,8 @@ jobs:
           docker pull ghcr.io/${{ github.repository }}/cicd-program:latest
       - name: Ensure ECR Repository Exists
         run: |
-          aws ecr describe-repositories --repository-names ***-program || \
-          aws ecr create-repository --repository-name ***-program
+          aws ecr describe-repositories --repository-names cicd-program || \
+          aws ecr create-repository --repository-name cicd-program
 
       - name: Tag and Push to ECR
         run: |
