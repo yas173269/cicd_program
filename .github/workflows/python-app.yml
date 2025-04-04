@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
@@ -11,21 +11,99 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          pytest test.py --maxfail=1 --disable-warnings -q
+
+  build_and_push:
+    runs-on: ubuntu-latest
+    needs: test  # Ensure deployment happens only after tests pass
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t ghcr.io/${{ github.repository }}/program-cicd:latest .
+
+      - name: Push Docker image to GitHub Container Registry
+        run: |
+          docker push ghcr.io/${{ github.repository }}/program-cicd:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build_and_push  # Ensure deployment happens only after image is pushed
+    environment:
+      name: production
+      url: ${{ steps.deploy-ecs.outputs.app-url }}  # URL of the deployed app (e.g., Load Balancer URL)
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.9'
+      - name: Set up AWS CLI
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Log in to Amazon ECR (Elastic Container Registry)
+        run: |
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
 
-    - name: Run tests
-      run: |
-        pytest test.py --maxfail=1 --disable-warnings -q
+      - name: Build Docker image and push to ECR
+        run: |
+          docker tag ghcr.io/${{ github.repository }}/your-app-name:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/your-app-name:latest
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/your-app-name:latest
+
+      - name: Update ECS Task Definition and Deploy
+        run: |
+          # Register new ECS task definition
+          TASK_DEF_JSON=$(aws ecs register-task-definition \
+            --family your-task-family \
+            --network-mode awsvpc \
+            --container-definitions "[{\"name\":\"your-app-name\",\"image\":\"${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/your-app-name:latest\",\"essential\":true,\"memory\":512,\"cpu\":256}]" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          
+          # Update ECS service to use the new task definition
+          aws ecs update-service \
+            --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+            --service ${{ secrets.ECS_SERVICE_NAME }} \
+            --task-definition $TASK_DEF_JSON \
+            --desired-count 1
+
+      - name: Get ECS URL
+        id: deploy-ecs
+        run: |
+          # Assuming the app is behind a load balancer, get the load balancer URL
+          LOAD_BALANCER_URL=$(aws ecs describe-services \
+            --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
+            --services ${{ secrets.ECS_SERVICE_NAME }} \
+            --query 'services[0].loadBalancers[0].dnsName' \
+            --output text)
+          echo "::set-output name=app-url::http://$LOAD_BALANCER_URL"
