@@ -31,7 +31,7 @@ jobs:
 
   build_and_push:
     runs-on: ubuntu-latest
-    needs: test 
+    needs: test
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
@@ -56,10 +56,10 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
-    needs: build_and_push  # Ensure deployment happens only after image is pushed
+    needs: build_and_push
     environment:
       name: production
-      url: ${{ steps.deploy-ecs.outputs.app-url }}  # URL of the deployed app (e.g., Load Balancer URL)
+      url: ${{ steps.deploy-ecs.outputs.app-url }}
 
     steps:
       - name: Checkout code
@@ -72,25 +72,46 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Log in to Amazon ECR (Elastic Container Registry)
+      - name: Log in to Amazon ECR
         run: |
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
 
-      - name: Build Docker image and push to ECR
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image from GHCR
+        run: |
+          docker pull ghcr.io/${{ github.repository }}/cicd-program:latest
+
+      - name: Tag and Push to ECR
         run: |
           docker tag ghcr.io/${{ github.repository }}/cicd-program:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/cicd-program:latest
           docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/cicd-program:latest
 
-      - name: Update ECS Task Definition and Deploy
+      - name: Register ECS Task Definition and Update Service
         run: |
-          # Register new ECS task definition
           TASK_DEF_JSON=$(aws ecs register-task-definition \
-            --family your-task-family \
+            --family cicd-program-task \
             --network-mode awsvpc \
-            --container-definitions "[{\"name\":\"your-app-name\",\"image\":\"${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/your-app-name:latest\",\"essential\":true,\"memory\":512,\"cpu\":256}]" \
+            --requires-compatibilities FARGATE \
+            --cpu "256" \
+            --memory "512" \
+            --execution-role-arn arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole \
+            --container-definitions "[{
+              \"name\": \"cicd-program\",
+              \"image\": \"${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/cicd-program:latest\",
+              \"essential\": true,
+              \"portMappings\": [{
+                \"containerPort\": 80,
+                \"protocol\": \"tcp\"
+              }]
+            }]" \
             --query 'taskDefinition.taskDefinitionArn' --output text)
-          
-          # Update ECS service to use the new task definition
+
           aws ecs update-service \
             --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
             --service ${{ secrets.ECS_SERVICE_NAME }} \
@@ -100,10 +121,10 @@ jobs:
       - name: Get ECS URL
         id: deploy-ecs
         run: |
-          # Assuming the app is behind a load balancer, get the load balancer URL
           LOAD_BALANCER_URL=$(aws ecs describe-services \
             --cluster ${{ secrets.ECS_CLUSTER_NAME }} \
             --services ${{ secrets.ECS_SERVICE_NAME }} \
-            --query 'services[0].loadBalancers[0].dnsName' \
+            --query 'services[0].loadBalancers[0].loadBalancerName' \
             --output text)
-          echo "::set-output name=app-url::http://$LOAD_BALANCER_URL"
+
+          echo "::set-output name=app-url::http://${LOAD_BALANCER_URL}"
